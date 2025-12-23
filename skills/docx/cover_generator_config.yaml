@@ -1,0 +1,17 @@
+placeholders:
+  case_number:
+    placeholder_text: "No. 6461"
+    description: "Template marker for the case number."
+  filing_name:
+    placeholder_text: "APPELLANTS OPENING BRIEF"
+    description: "Template marker for the filing name."
+  judge:
+    placeholder_text: "Hon. Stacy Beckerman"
+    description: "Template marker for the judge's name."
+
+automation:
+  allow_subprocesses: false
+  notes: >
+    The cover generator runs purely in Python (zipfile + XML validation) so it can be
+    embedded in higher-level automation flows without shelling out. Keep templates
+    read-only and pass new values via CLI or wrapper code.
