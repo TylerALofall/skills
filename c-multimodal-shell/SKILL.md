@@ -1,6 +1,6 @@
 ---
 name: c-multimodal-shell
-description: Build or extend C-only, English-configured, stateless multimodal model shells that ingest XML training manifests for vision/audio/text placeholders, expose 40 numbered training slots plus a level-41 Markdown slot, avoid vector embeddings, and include local GGUF computer-control console hooks for screenshots, mouse position, button coordinates, grid overlays, streaming ticks, mouse/keyboard execution, and response-safe overlays.
+description: Build or extend C-only, English-configured, stateless multimodal model shells that ingest XML training manifests for vision/audio/text placeholders, expose 40 numbered training slots plus a level-41 Markdown slot, avoid vector embeddings, and include local C runtime computer-control console hooks for screenshots, mouse position, button coordinates, grid overlays, streaming ticks, mouse/keyboard execution, and response-safe overlays.
 ---
 
 # C Multimodal Shell
@@ -17,7 +17,7 @@ description: Build or extend C-only, English-configured, stateless multimodal mo
 
 Copy `assets/c-shell-template/` into the target project when the user wants a working scaffold. The template contains:
 
-- `main.c`: C99 command shell, XML slot manifest loader, slot-40 dictionary lookup, level-41 Markdown loader, console state model, one-second tick loop, and stubbed GGUF/screen-control adapters.
+- `main.c`: C99 command shell, XML slot manifest loader, slot-40 dictionary lookup, level-41 Markdown loader, console state model, one-second tick loop, strict frame/action validator, and stubbed C screen-control/model adapters.
 - `Makefile`: C-only build commands.
 - `training_slots.xml`: example 40-slot XML manifest with slot 40 reserved for `dictionary.xml`.
 - `dictionary.xml`: grounded word dictionary where each word may have multiple definitions.
@@ -34,7 +34,7 @@ Compile with `make`, then run `./c_multimodal_shell --xml training_slots.xml --m
 2. Keep external integrations behind C function boundaries:
    - `capture_screen_frame` for screenshots and temporary grid overlay capture.
    - `detect_buttons` for button labels and coordinates.
-   - `stream_model_tick` for GGUF streaming updates.
+   - `stream_model_tick` for C model-stream updates.
    - `operate_mouse_keyboard` for actual input execution.
 3. Store detected controls as English labels plus coordinate placeholders such as `BTN_01`, `BTN_02`, and `MOUSE_CURRENT`.
 4. Make the persistent tick non-destructive: if the model is responding, enqueue or display an overlay update rather than restarting generation.
@@ -49,7 +49,7 @@ Explain this distinction when users ask why the scaffold does not answer yet:
 - Slot 40 is the grounded dictionary slot. When Shakti hits an unknown or skipped word such as `the` or `as`, lookup the word in XML and return every matching definition.
 - After level 41, load permanent internal memory from XML schemas keyed by epoch time.
 
-For a first end-to-end demo, use `--prompt`, `--dict`, and `--lookup` to show the prompt packet and dictionary pull. For production, replace the dry-run GGUF adapter with the local C/C++ runtime that Tyler selects.
+For a first end-to-end demo, use `--prompt`, `--dict`, and `--lookup` to show the prompt packet and dictionary pull. For production, replace the dry-run C adapter with the local C/C++ runtime that Tyler selects.
 
 ## XML Slot Shape
 
@@ -72,9 +72,10 @@ When implementing the console feature:
 - Capture a screenshot every second while control mode is active.
 - Include current mouse x/y coordinates with each frame.
 - Detect or ingest all visible buttons with x/y/w/h coordinates.
-- Convert button coordinates to placeholders before passing them to the local GGUF model.
+- Convert button coordinates to placeholders before passing them to the local C model runtime.
 - Add a clear grid to the captured screenshot only for the model-facing image; do not leave the grid on the user’s live display.
 - Stream model output so overlay updates can be injected while the model is mid-response.
+- Validate every frame and every requested action before execution; reject missing screenshots, missing mouse coordinates, invalid button rectangles, unknown placeholders, and unsafe keyboard payloads.
 - Execute mouse and keyboard actions only through explicit C adapter functions with a safety gate that can be reviewed or replaced per operating system.
 
 ## Post-41 Memory and MCP Gate
@@ -87,6 +88,7 @@ Use the chat window spec in `shakti_memory_schema.xml`: dark C/C++ UI, log/appro
 
 ## References
 
-Read `references/control-console-contract.md` when adding OS-specific screenshot, overlay, mouse, keyboard, or GGUF integrations.
+Read `references/control-console-contract.md` when adding OS-specific screenshot, overlay, mouse, keyboard, or local C model integrations.
 
-Read `references/making-the-model-respond.md` when the user asks what is needed beyond training data, why the scaffold does not generate real model text yet, or how to connect prompts to a local GGUF runtime.
+Read `references/runtime-flow.md` when the user asks where model responses/actions come from, whether the control console means ASCII control codes, or how to feed files into the scaffold without GitHub uploads.
+

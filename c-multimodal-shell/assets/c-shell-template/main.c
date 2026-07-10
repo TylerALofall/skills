@@ -34,6 +34,11 @@ typedef struct {
     int model_is_responding;
 } ConsoleFrame;
 
+typedef struct {
+    char action[FIELD];
+    char placeholder[16];
+} ModelAction;
+
 static int read_file(const char *path, char **out, long *size) {
     FILE *file = fopen(path, "rb");
     long length;
@@ -181,6 +186,75 @@ static void detect_buttons(ConsoleFrame *frame) {
     }
 }
 
+static int placeholder_exists(const ConsoleFrame *frame, const char *placeholder) {
+    int i;
+    if (strcmp(placeholder, "MOUSE_CURRENT") == 0) return 1;
+    for (i = 0; i < frame->button_count; i++) {
+        if (strcmp(frame->buttons[i].placeholder, placeholder) == 0) return 1;
+    }
+    return 0;
+}
+
+static int validate_control_frame(const ConsoleFrame *frame, char *reason, size_t reason_size) {
+    int i;
+    if (!frame) {
+        snprintf(reason, reason_size, "frame missing");
+        return 0;
+    }
+    if (frame->screenshot_path[0] == '\0') {
+        snprintf(reason, reason_size, "screenshot path missing");
+        return 0;
+    }
+    if (frame->mouse_x < 0 || frame->mouse_y < 0) {
+        snprintf(reason, reason_size, "mouse coordinates must be non-negative");
+        return 0;
+    }
+    if (frame->button_count < 0 || frame->button_count > MAX_BUTTONS) {
+        snprintf(reason, reason_size, "button count out of range");
+        return 0;
+    }
+    for (i = 0; i < frame->button_count; i++) {
+        const ButtonRef *button = &frame->buttons[i];
+        if (button->placeholder[0] == '\0' || strncmp(button->placeholder, "BTN_", 4) != 0) {
+            snprintf(reason, reason_size, "button %d placeholder invalid", i + 1);
+            return 0;
+        }
+        if (button->label[0] == '\0') {
+            snprintf(reason, reason_size, "button %d label missing", i + 1);
+            return 0;
+        }
+        if (button->x < 0 || button->y < 0 || button->width <= 0 || button->height <= 0) {
+            snprintf(reason, reason_size, "button %d rectangle invalid", i + 1);
+            return 0;
+        }
+    }
+    snprintf(reason, reason_size, "ok");
+    return 1;
+}
+
+static int validate_input_action(const ConsoleFrame *frame, const char *placeholder, const char *action, char *reason, size_t reason_size) {
+    size_t action_len;
+    if (!placeholder || !action || placeholder[0] == '\0' || action[0] == '\0') {
+        snprintf(reason, reason_size, "action target or verb missing");
+        return 0;
+    }
+    if (!placeholder_exists(frame, placeholder)) {
+        snprintf(reason, reason_size, "unknown placeholder: %s", placeholder);
+        return 0;
+    }
+    action_len = strlen(action);
+    if (action_len > 128U) {
+        snprintf(reason, reason_size, "action too long");
+        return 0;
+    }
+    if (strcmp(action, "hover") != 0 && strcmp(action, "click") != 0 && strncmp(action, "type:", 5) != 0 && strcmp(action, "wait") != 0) {
+        snprintf(reason, reason_size, "action verb not allowed: %s", action);
+        return 0;
+    }
+    snprintf(reason, reason_size, "ok");
+    return 1;
+}
+
 static void assemble_prompt_packet(const ConsoleFrame *frame, const char *user_prompt, char *out, size_t out_size) {
     int written;
     int i;
@@ -212,9 +286,31 @@ static void assemble_prompt_packet(const ConsoleFrame *frame, const char *user_p
     }
 }
 
-static void gguf_generate_stream_dry_run(const char *prompt_packet) {
+static void local_model_stream_dry_run(const char *prompt_packet, char *model_line, size_t model_line_size) {
     printf("model_prompt_packet_begin\n%smodel_prompt_packet_end\n", prompt_packet);
-    printf("model_response_stream: WAIT - dry-run adapter is connected; attach Shakti local runtime here.\n");
+    snprintf(model_line, model_line_size, "ACTION hover BTN_01");
+    printf("model_response_stream: %s\n", model_line);
+}
+
+static int parse_model_action_line(const char *model_line, ModelAction *out, char *reason, size_t reason_size) {
+    char verb[FIELD];
+    char placeholder[FIELD];
+    if (!model_line || !out) {
+        snprintf(reason, reason_size, "model line missing");
+        return 0;
+    }
+    if (sscanf(model_line, "ACTION %255s %255s", verb, placeholder) != 2) {
+        snprintf(reason, reason_size, "model line is not an ACTION command");
+        return 0;
+    }
+    if (strlen(placeholder) >= sizeof(out->placeholder)) {
+        snprintf(reason, reason_size, "placeholder too long");
+        return 0;
+    }
+    snprintf(out->action, sizeof(out->action), "%s", verb);
+    snprintf(out->placeholder, sizeof(out->placeholder), "%s", placeholder);
+    snprintf(reason, reason_size, "ok");
+    return 1;
 }
 
 static void stream_model_tick(const ConsoleFrame *frame) {
@@ -235,8 +331,13 @@ static void stream_model_tick(const ConsoleFrame *frame) {
     }
 }
 
-static void operate_mouse_keyboard(const char *placeholder, const char *action, int dry_run) {
-    printf("%s action=%s target=%s\n", dry_run ? "dry_run" : "execute", action, placeholder);
+static void operate_mouse_keyboard(const ConsoleFrame *frame, const char *placeholder, const char *action, int dry_run) {
+    char reason[TEXT];
+    if (!validate_input_action(frame, placeholder, action, reason, sizeof(reason))) {
+        printf("reject action=%s target=%s reason=%s\n", action ? action : "", placeholder ? placeholder : "", reason);
+        return;
+    }
+    printf("%s action=%s target=%s validator=%s\n", dry_run ? "dry_run" : "execute", action, placeholder, reason);
 }
 
 static void wait_one_second(void) {
@@ -288,10 +389,23 @@ int main(int argc, char **argv) {
         capture_screen_frame(&frame);
         detect_buttons(&frame);
         char prompt_packet[2048];
+        char model_line[TEXT];
+        ModelAction model_action;
+        char validation_reason[TEXT];
+        if (!validate_control_frame(&frame, validation_reason, sizeof(validation_reason))) {
+            fprintf(stderr, "invalid control frame at tick %lu: %s\n", frame.tick_id, validation_reason);
+            free(markdown);
+            return 1;
+        }
+        printf("frame_validator=%s\n", validation_reason);
         stream_model_tick(&frame);
         assemble_prompt_packet(&frame, user_prompt, prompt_packet, sizeof(prompt_packet));
-        gguf_generate_stream_dry_run(prompt_packet);
-        operate_mouse_keyboard("BTN_01", "hover", 1);
+        local_model_stream_dry_run(prompt_packet, model_line, sizeof(model_line));
+        if (parse_model_action_line(model_line, &model_action, validation_reason, sizeof(validation_reason))) {
+            operate_mouse_keyboard(&frame, model_action.placeholder, model_action.action, 1);
+        } else {
+            printf("reject model_line=%s reason=%s\n", model_line, validation_reason);
+        }
         if (i + 1 < ticks) wait_one_second();
     }
 

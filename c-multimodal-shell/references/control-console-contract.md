@@ -21,8 +21,8 @@ Each model tick should produce a packet with these fields:
 
 ## Streaming Rule
 
-The GGUF adapter should stream tokens or partial responses. If a new one-second screenshot arrives while the model is responding, send an overlay/frame update to the stream rather than killing the current request.
+The local C model adapter should stream tokens or partial responses. If a new one-second screenshot arrives while the model is responding, send an overlay/frame update to the stream rather than killing the current request.
 
 ## Safety Gate
 
-Keep actual mouse and keyboard operations behind one C function that receives a reviewed action struct. This keeps OS-specific APIs isolated and lets a caller add confirmation, allowlists, or dry-run behavior.
+Keep actual mouse and keyboard operations behind one C function that receives a reviewed action struct. Validate the action struct first: known placeholder, allowed action, on-screen rectangle, bounded text length, and no raw coordinate execution unless Tyler explicitly enables it. This keeps OS-specific APIs isolated and lets a caller add confirmation, allowlists, or dry-run behavior.
